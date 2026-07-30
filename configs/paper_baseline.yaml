@@ -1,0 +1,72 @@
+data:
+  dataset_path: data/traffic.csv
+  timestamp_col: DateTime
+  entity_col: Junction
+  feature_columns:
+    - Vehicles
+  target_mode: future_target_column
+  target_column: Vehicles
+  window_size: 24
+  horizon_steps: 1
+  future_average_steps: 1
+  split_ratio: 0.8
+  sample_interval_minutes: 60
+  peak_hours:
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+
+preprocessing:
+  normalization: minmax
+  use_engineered_features: true
+  use_peak_indicator: true
+  use_congestion_transition: true
+  use_temporal_features: true
+  use_lag_features: true
+  use_entity_one_hot: true
+
+model:
+  hidden_units:
+    - 128
+    - 64
+  dropout: 0.3
+  dense_units: 64
+  learning_rate: 0.001
+  batch_size: 64
+  epochs: 40
+  loss: mse
+  early_stopping: false
+  early_stopping_patience: 7
+  gradient_clipnorm:
+  random_seed: 42
+
+xgboost:
+  max_depth: 6
+  learning_rate: 0.05
+  n_estimators: 300
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+
+ensemble:
+  weight: 0.7
+  search_validation_weight: false
+  search_min: 0.6
+  search_max: 0.8
+  search_step: 0.02
+  optimization_metric: rmse
+
+evaluation:
+  num_classes: 3
+  bins_strategy: quantile
+  groupwise_bins: true
+  paper_target_accuracy: 91.3
+
+output_dir: artifacts/paper_baseline
