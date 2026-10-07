@@ -1,12 +1,5 @@
 # Intelligent Traffic Congestion Prediction
 
-This repository accompanies the research paper:
-
-**"Intelligent Traffic Congestion Prediction Using Deep Learning, Historical Learning & Live Traffic Inference"**  
-Authors: Abhigyan Kumar Mahato, Kumar Satwik, Upasana Tiwari  
-Department of AIT-CSE, Chandigarh University, India  
-Paper PDF: `C:\Users\ABHIGYAN\Documents\research_paper.pdf`
-
 The project implements a hybrid congestion prediction framework that combines:
 - BiLSTM with attention to model temporal congestion patterns
 - XGBoost to capture non-linear feature interactions
@@ -112,16 +105,3 @@ Notes:
 The paper reports `91.3%` accuracy under its evaluation protocol and dataset.  
 This repo provides a strong reproduction pipeline and a tuned configuration. Actual results may vary with dataset, split, and live traffic availability.
 
-## Citation
-
-If you use this work, please cite the paper:
-
-```text
-Mahato, A. K., Satwik, K., & Tiwari, U. (2025).
-Intelligent Traffic Congestion Prediction Using Deep Learning, Historical Learning & Live Traffic Inference.
-```
-
-## Contact
-
-Corresponding Author: Abhigyan Kumar Mahato  
-Email: mastermindagaming@gmail.com
