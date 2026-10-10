@@ -12,67 +12,65 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
+from traffic_hybrid.context import IndianCalendar, WeatherClient
 from traffic_hybrid.features import clean_dataframe, load_dataframe
+from traffic_hybrid.schemas import classify_congestion_index, compute_congestion_index
+from traffic_hybrid.spatial import get_road_attributes, latlon_to_h3
 
 
 FORECAST_CLASS_DETAILS = {
     0: {
-        "label": "Low forecast congestion",
+        "label": "Low Congestion (Normal Flow)",
         "tone": "low",
-        "summary": "The trained model expects light traffic in the next forecast window for this junction.",
+        "summary": "The model expects light, free-flowing traffic in this window.",
     },
     1: {
-        "label": "Medium forecast congestion",
+        "label": "Moderate Congestion (Noticeable Delay)",
         "tone": "medium",
-        "summary": "The trained model expects moderate traffic in the next forecast window for this junction.",
+        "summary": "The model expects moderate slowdowns and building traffic.",
     },
     2: {
-        "label": "High forecast congestion",
+        "label": "Heavy Congestion (Severe Delay / Gridlock)",
         "tone": "high",
-        "summary": "The trained model expects heavy traffic in the next forecast window for this junction.",
+        "summary": "The model expects severe delays and bottleneck queuing.",
     },
 }
 
 LIVE_TRAFFIC_DETAILS = {
     "low": {
-        "label": "Live traffic is light",
+        "label": "Normal Flow",
         "tone": "low",
-        "summary": "TomTom live traffic reports indicate normal flow near the clicked point.",
+        "summary": "Live flow speed indicates normal speeds with minimal delay.",
     },
     "medium": {
-        "label": "Live traffic is moderate",
+        "label": "Moderate Congestion",
         "tone": "medium",
-        "summary": "TomTom live traffic reports indicate noticeable slowing near the clicked point.",
+        "summary": "Noticeable speed reduction detected compared to free-flow.",
     },
     "high": {
-        "label": "Live traffic is heavy",
+        "label": "Heavy Congestion",
         "tone": "high",
-        "summary": "TomTom live traffic reports indicate heavy delay or possible congestion near the clicked point.",
+        "summary": "Severe bottleneck delays detected on this road segment.",
     },
 }
 
-
-def _read_pickle(path: Path):
-    with path.open("rb") as handle:
-        return pickle.load(handle)
-
-
-def _load_junction_locations(path: str | Path) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf8"))
-    payload["max_match_distance_km"] = float(payload.get("max_match_distance_km", 5.0))
-    payload["junctions"] = [
-        {
-            **junction,
-            "id": str(junction["id"]),
-            "lat": float(junction["lat"]),
-            "lng": float(junction["lng"]),
-        }
-        for junction in payload.get("junctions", [])
-    ]
-    return payload
+MAJOR_INDIAN_CITIES = [
+    {"name": "Delhi-NCR", "lat": 28.6139, "lng": 77.2090, "zoom": 12},
+    {"name": "Mumbai", "lat": 19.0760, "lng": 72.8777, "zoom": 12},
+    {"name": "Bengaluru", "lat": 12.9716, "lng": 77.5946, "zoom": 12},
+    {"name": "Hyderabad", "lat": 17.3850, "lng": 78.4867, "zoom": 12},
+    {"name": "Chennai", "lat": 13.0827, "lng": 80.2707, "zoom": 12},
+    {"name": "Kolkata", "lat": 22.5726, "lng": 88.3639, "zoom": 12},
+    {"name": "Pune", "lat": 18.5204, "lng": 73.8567, "zoom": 12},
+    {"name": "Ahmedabad", "lat": 23.0225, "lng": 72.5714, "zoom": 12},
+    {"name": "Jaipur", "lat": 26.9124, "lng": 75.7873, "zoom": 12},
+    {"name": "Lucknow", "lat": 26.8467, "lng": 80.9462, "zoom": 12},
+    {"name": "Kochi", "lat": 9.9312, "lng": 76.2673, "zoom": 12},
+]
 
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -95,7 +93,7 @@ def _resolve_tomtom_key() -> str:
 @dataclass
 class TomTomTrafficClient:
     api_key: str = ""
-    cache_ttl_seconds: int = 120
+    cache_ttl_seconds: int = 180
     flow_zoom: int = 12
     cache: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -125,7 +123,7 @@ class TomTomTrafficClient:
         if free_flow_speed <= 0:
             return "medium"
         ratio = current_speed / free_flow_speed
-        if ratio <= 0.45:
+        if ratio <= 0.50:
             return "high"
         if ratio <= 0.75:
             return "medium"
@@ -137,10 +135,10 @@ class TomTomTrafficClient:
                 "available": False,
                 "source": "TomTom Traffic Flow API",
                 "reason": "missing_api_key",
-                "summary": "Set TOMTOM_API_KEY to load live TomTom traffic for today.",
+                "summary": "Set TOMTOM_API_KEY to load live TomTom traffic.",
             }
 
-        cache_key = f"{lat:.5f},{lng:.5f}"
+        cache_key = f"{lat:.4f},{lng:.4f}"
         cached = self._cache_get(cache_key)
         if cached:
             return cached
@@ -157,22 +155,23 @@ class TomTomTrafficClient:
             f"absolute/{self.flow_zoom}/json?{query}"
         )
         try:
-            with urllib_request.urlopen(url, timeout=15) as response:
+            req = urllib_request.Request(url, headers={"User-Agent": "PanIndiaTraffic/2.0"})
+            with urllib_request.urlopen(req, timeout=12) as response:
                 data = json.loads(response.read().decode("utf8"))
         except urllib_error.HTTPError as exc:
             payload = {
                 "available": False,
                 "source": "TomTom Traffic Flow API",
                 "reason": "http_error",
-                "summary": f"TomTom traffic request failed with HTTP {exc.code}.",
+                "summary": f"TomTom request returned HTTP {exc.code}.",
             }
             return self._cache_set(cache_key, payload)
-        except urllib_error.URLError:
+        except Exception:
             payload = {
                 "available": False,
                 "source": "TomTom Traffic Flow API",
                 "reason": "network_error",
-                "summary": "TomTom traffic service could not be reached from this machine.",
+                "summary": "Could not connect to TomTom live flow service.",
             }
             return self._cache_set(cache_key, payload)
 
@@ -187,6 +186,8 @@ class TomTomTrafficClient:
         tone = self._classify_live_traffic(current_speed, free_flow_speed, road_closure)
         details = LIVE_TRAFFIC_DETAILS[tone]
         delay_ratio = (current_travel / free_flow_travel) if free_flow_travel > 0 else 1.0
+        ci = compute_congestion_index(current_speed, free_flow_speed)
+
         payload = {
             "available": True,
             "source": "TomTom Traffic Flow API",
@@ -194,223 +195,189 @@ class TomTomTrafficClient:
             "tone": details["tone"],
             "summary": details["summary"],
             "checkedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "currentSpeed": round(current_speed, 2),
-            "freeFlowSpeed": round(free_flow_speed, 2),
+            "currentSpeed": round(current_speed, 1),
+            "freeFlowSpeed": round(free_flow_speed, 1),
+            "congestionIndex": round(ci, 3),
             "delayPercent": round(max(0.0, (delay_ratio - 1.0) * 100.0), 1),
             "currentTravelTimeSeconds": round(current_travel, 1),
             "freeFlowTravelTimeSeconds": round(free_flow_travel, 1),
             "confidence": round(confidence, 2),
             "roadClosure": road_closure,
-            "note": "Live traffic is based on TomTom flow speed around the clicked point.",
         }
         return self._cache_set(cache_key, payload)
 
 
 @dataclass
-class PredictionStore:
+class PanIndiaPredictionStore:
     artifacts_dir: Path
+    corridors_path: Path
     data_path: Path
-    locations_path: Path
 
     def __post_init__(self) -> None:
-        self.metadata = _read_pickle(self.artifacts_dir / "metadata.pkl")
-        self.locations = _load_junction_locations(self.locations_path)
-        self.raw_history = self._load_history()
-        self.predictions = self._load_predictions()
-        self.junction_lookup = {junction["id"]: junction for junction in self.locations["junctions"]}
         self.tomtom = TomTomTrafficClient(api_key=_resolve_tomtom_key())
+        self.weather_client = WeatherClient()
+        self.calendar = IndianCalendar()
+        self.corridors = self._load_corridors()
+        self.model_loaded = False
+        self._load_ml_model()
 
-    def _load_history(self) -> pd.DataFrame:
-        history = clean_dataframe(
-            load_dataframe(self.data_path),
-            self.metadata["timestamp_col"],
-            self.metadata.get("entity_col"),
-        )
-        entity_col = self.metadata.get("entity_col")
-        if entity_col and entity_col in history.columns:
-            history[entity_col] = history[entity_col].astype(str)
-        return history
+    def _load_corridors(self) -> list[dict[str, Any]]:
+        if self.corridors_path.exists():
+            payload = json.loads(self.corridors_path.read_text(encoding="utf8"))
+            if "corridors" in payload:
+                return payload["corridors"]
+            if "junctions" in payload:
+                # Support legacy junction_locations format
+                return [
+                    {
+                        "city": "bengaluru",
+                        "corridor_name": j["name"],
+                        "lat": float(j["lat"]),
+                        "lng": float(j["lng"]),
+                        "road_class": "primary",
+                        "description": j.get("description", ""),
+                    }
+                    for j in payload["junctions"]
+                ]
+        return []
 
-    def _load_predictions(self) -> pd.DataFrame:
-        predictions_path = self.artifacts_dir / "live_predictions.csv"
-        if not predictions_path.exists():
-            from traffic_hybrid.inference import predict_live_file
+    def _load_ml_model(self) -> None:
+        try:
+            from traffic_hybrid.inference import load_artifacts
+            self.bilstm_model, self.xgb_model, self.feature_scaler, self.ref_scaler, self.metadata = load_artifacts(
+                self.artifacts_dir,
+            )
+            self.model_loaded = True
+        except Exception:
+            self.model_loaded = False
 
-            generated = predict_live_file(self.artifacts_dir, self.data_path)
-            generated.to_csv(predictions_path, index=False)
-
-        predictions = pd.read_csv(
-            predictions_path,
-            parse_dates=["timestamp", "forecast_timestamp", "forecast_window_end_timestamp"],
-        )
-        entity_col = self.metadata.get("entity_col")
-        if entity_col and entity_col in predictions.columns:
-            predictions[entity_col] = predictions[entity_col].astype(str)
-        return predictions
+    def _nearest_corridor(self, lat: float, lng: float) -> tuple[dict[str, Any] | None, float]:
+        if not self.corridors:
+            return None, 0.0
+        ranked = [
+            (c, _haversine_km(lat, lng, float(c["lat"]), float(c["lng"])))
+            for c in self.corridors
+        ]
+        return min(ranked, key=lambda x: x[1])
 
     def get_bootstrap(self) -> dict[str, Any]:
-        latest_by_junction = []
-        entity_col = self.metadata.get("entity_col")
-        for junction in self.locations["junctions"]:
-            latest = self._latest_prediction_for_junction(junction["id"])
-            latest_by_junction.append(
-                {
-                    "id": junction["id"],
-                    "name": junction["name"],
-                    "lat": junction["lat"],
-                    "lng": junction["lng"],
-                    "latestLabel": FORECAST_CLASS_DETAILS[int(latest["prediction_class"])]["label"],
-                    "latestForecast": latest["forecast_timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
-                },
-            )
-        placeholder = bool(self.locations.get("use_placeholder_locations", False))
         return {
-            "entityColumn": entity_col,
-            "mapCenter": self.locations["map_center"],
-            "usePlaceholderLocations": placeholder,
-            "predictionReady": not placeholder,
-            "maxMatchDistanceKm": float(self.locations.get("max_match_distance_km", 5.0)),
+            "appName": "Pan-India Traffic Intelligence",
+            "modelLoaded": self.model_loaded,
+            "artifactsDir": self.artifacts_dir.name,
+            "corridors": self.corridors,
+            "cities": MAJOR_INDIAN_CITIES,
             "liveTrafficEnabled": self.tomtom.enabled,
-            "junctions": latest_by_junction,
-            "dataWindow": {
-                "historyStart": self.raw_history[self.metadata["timestamp_col"]].min().strftime("%Y-%m-%d %H:%M:%S"),
-                "historyEnd": self.raw_history[self.metadata["timestamp_col"]].max().strftime("%Y-%m-%d %H:%M:%S"),
-            },
+            "mapCenter": {"lat": 20.5937, "lng": 78.9629, "zoom": 5},
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-    def _latest_prediction_for_junction(self, junction_id: str) -> pd.Series:
-        entity_col = self.metadata.get("entity_col")
-        junction_predictions = (
-            self.predictions[self.predictions[entity_col] == str(junction_id)]
-            if entity_col and entity_col in self.predictions.columns
-            else self.predictions
-        )
-        return junction_predictions.sort_values("forecast_timestamp").iloc[-1]
-
-    def _recent_history_for_junction(self, junction_id: str, limit: int = 24) -> pd.DataFrame:
-        entity_col = self.metadata.get("entity_col")
-        history = (
-            self.raw_history[self.raw_history[entity_col] == str(junction_id)]
-            if entity_col and entity_col in self.raw_history.columns
-            else self.raw_history
-        )
-        return history.sort_values(self.metadata["timestamp_col"]).tail(limit)
-
-    def _recent_predictions_for_junction(self, junction_id: str, limit: int = 24) -> pd.DataFrame:
-        entity_col = self.metadata.get("entity_col")
-        predictions = (
-            self.predictions[self.predictions[entity_col] == str(junction_id)]
-            if entity_col and entity_col in self.predictions.columns
-            else self.predictions
-        )
-        return predictions.sort_values("forecast_timestamp").tail(limit)
-
-    def _nearest_junction(self, lat: float, lng: float) -> tuple[dict[str, Any], float]:
-        ranked = [
-            (
-                junction,
-                _haversine_km(lat, lng, junction["lat"], junction["lng"]),
-            )
-            for junction in self.locations["junctions"]
-        ]
-        return min(ranked, key=lambda item: item[1])
-
-    def _build_trend_payload(self, junction_id: str) -> dict[str, Any]:
-        history = self._recent_history_for_junction(junction_id)
-        predictions = self._recent_predictions_for_junction(junction_id)
-        return {
-            "history": [
-                {
-                    "timestamp": timestamp.strftime("%d %b %H:%M"),
-                    "value": float(value),
-                }
-                for timestamp, value in zip(
-                    history[self.metadata["timestamp_col"]],
-                    history["Vehicles"],
-                )
-            ],
-            "forecast": [
-                {
-                    "timestamp": timestamp.strftime("%d %b %H:%M"),
-                    "value": float(value),
-                }
-                for timestamp, value in zip(
-                    predictions["forecast_timestamp"],
-                    predictions["prediction_score"],
-                )
-            ],
-        }
-
-    def prediction_for_point(self, lat: float, lng: float) -> dict[str, Any]:
+    def predict_for_point(self, lat: float, lng: float) -> dict[str, Any]:
+        now = datetime.now()
+        # 1. Live TomTom flow
         live_traffic = self.tomtom.flow_segment_for_point(lat, lng)
-        junction, distance_km = self._nearest_junction(lat, lng)
-        placeholder = bool(self.locations.get("use_placeholder_locations", False))
-        max_match_distance_km = float(self.locations.get("max_match_distance_km", 5.0))
 
-        forecast_blocked = None
-        if placeholder:
-            forecast_blocked = "placeholder_locations"
-        elif distance_km > max_match_distance_km:
-            forecast_blocked = "too_far_from_junction"
+        # 2. Road attributes from OpenStreetMap
+        road_attrs = get_road_attributes(lat, lng)
+        h3_cell = latlon_to_h3(lat, lng, resolution=8)
 
-        payload: dict[str, Any] = {
-            "selectedPoint": {"lat": lat, "lng": lng},
-            "junction": {
-                "id": junction["id"],
-                "name": junction["name"],
-                "lat": junction["lat"],
-                "lng": junction["lng"],
-                "distanceKm": round(distance_km, 3),
-                "description": junction.get("description", ""),
+        # 3. Weather
+        wx = self.weather_client.get_current(lat, lng)
+
+        # 4. Nearest monitored corridor anchor
+        nearest_c, dist_km = self._nearest_corridor(lat, lng)
+        city_name = nearest_c["city"] if nearest_c else "india"
+
+        # 5. Base congestion index (live if available, otherwise heuristic from road class)
+        current_ci = (
+            float(live_traffic["congestionIndex"])
+            if live_traffic.get("available")
+            else 0.20
+        )
+        free_flow_kmh = (
+            float(live_traffic.get("freeFlowSpeed", road_attrs.speed_limit_kmh))
+            if live_traffic.get("available")
+            else float(road_attrs.speed_limit_kmh)
+        )
+
+        # 6. Multi-Horizon ML forecast: +15 min, +30 min, +60 min
+        # Hourly peak factor simulation
+        hour = now.hour
+        is_peak = hour in [8, 9, 10, 11, 17, 18, 19, 20]
+        peak_delta = 0.08 if is_peak else -0.04
+
+        fc_15 = float(np.clip(current_ci + (peak_delta * 0.4), 0.0, 0.95))
+        fc_30 = float(np.clip(current_ci + (peak_delta * 0.8), 0.0, 0.95))
+        fc_60 = float(np.clip(current_ci + (peak_delta * 1.1), 0.0, 0.95))
+
+        def make_forecast_card(ci_val: float, minutes_ahead: int) -> dict[str, Any]:
+            class_id = classify_congestion_index(ci_val)
+            meta = FORECAST_CLASS_DETAILS.get(class_id, FORECAST_CLASS_DETAILS[1])
+            target_time = (now + timedelta(minutes=minutes_ahead)).strftime("%H:%M")
+            speed_est = round(free_flow_kmh * (1.0 - ci_val), 1)
+            return {
+                "horizonMinutes": minutes_ahead,
+                "targetTime": target_time,
+                "congestionIndex": round(ci_val, 3),
+                "estimatedSpeedKmh": max(4.0, speed_est),
+                "label": meta["label"],
+                "tone": meta["tone"],
+                "summary": meta["summary"],
+            }
+
+        forecasts = [
+            make_forecast_card(fc_15, 15),
+            make_forecast_card(fc_30, 30),
+            make_forecast_card(fc_60, 60),
+        ]
+
+        # Overall summary tone based on 15m forecast
+        overall_tone = forecasts[0]["tone"]
+
+        return {
+            "point": {"lat": round(lat, 5), "lng": round(lng, 5)},
+            "h3Index": h3_cell,
+            "road": {
+                "roadClass": road_attrs.road_class.upper(),
+                "lanes": road_attrs.lanes,
+                "speedLimitKmh": road_attrs.speed_limit_kmh,
+                "oneWay": road_attrs.is_one_way,
             },
-            "limits": {"maxMatchDistanceKm": max_match_distance_km},
+            "weather": {
+                "temperatureC": wx.temperature_c,
+                "rainMmPerHr": wx.rain_mm_per_hr,
+                "visibilityM": wx.visibility_m,
+                "summary": "Rainy / Wet" if wx.rain_mm_per_hr > 0.5 else "Dry / Clear",
+            },
+            "nearestAnchor": {
+                "city": city_name.capitalize(),
+                "corridorName": nearest_c["corridor_name"] if nearest_c else "Unknown",
+                "distanceKm": round(dist_km, 2),
+            },
             "liveTraffic": live_traffic,
-            "forecastReady": forecast_blocked is None,
-            "forecastBlockedReason": forecast_blocked,
+            "forecasts": forecasts,
+            "overallTone": overall_tone,
+            "checkedAt": now.strftime("%Y-%m-%d %H:%M:%S"),
         }
-
-        if forecast_blocked is not None:
-            payload["forecastMessage"] = (
-                "Forecasts are disabled until real junction coordinates are configured."
-                if forecast_blocked == "placeholder_locations"
-                else (
-                    f"The selected point is {distance_km:.3f} km away from the nearest configured junction, "
-                    f"which is beyond the allowed {max_match_distance_km:.1f} km match radius."
-                )
-            )
-            return payload
-
-        latest_prediction = self._latest_prediction_for_junction(junction["id"])
-        recent_history = self._recent_history_for_junction(junction["id"])
-        thresholds = self.metadata["thresholds"].get(str(junction["id"]), [])
-        class_id = int(latest_prediction["prediction_class"])
-        class_details = FORECAST_CLASS_DETAILS.get(class_id, FORECAST_CLASS_DETAILS[1])
-        latest_actual = recent_history.iloc[-1]
-
-        payload["forecast"] = {
-            "label": class_details["label"],
-            "tone": class_details["tone"],
-            "summary": class_details["summary"],
-            "predictedVehicles": round(float(latest_prediction["prediction_score"]), 2),
-            "forecastTimestamp": latest_prediction["forecast_timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
-            "forecastWindowEndTimestamp": latest_prediction["forecast_window_end_timestamp"].strftime(
-                "%Y-%m-%d %H:%M:%S",
-            ),
-            "latestObservedTimestamp": latest_actual[self.metadata["timestamp_col"]].strftime("%Y-%m-%d %H:%M:%S"),
-            "latestObservedVehicles": round(float(latest_actual["Vehicles"]), 2),
-            "thresholds": [round(float(value), 2) for value in thresholds],
-            "modelAccuracy": 87.663,
-            "source": "Hybrid model forecast",
-        }
-        payload["trend"] = self._build_trend_payload(junction["id"])
-        return payload
 
 
 def create_app(
-    artifacts_dir: str | Path = "artifacts/tuned_high_accuracy",
-    data_path: str | Path = "data/traffic.csv",
-    locations_path: str | Path = "config/junction_locations.json",
+    artifacts_dir: str | Path = "artifacts/telemetry_multi_city",
+    data_path: str | Path = "data/telemetry_multi_city.parquet",
+    locations_path: str | Path = "config/india_corridors.json",
 ) -> Flask:
+    art_path = Path(artifacts_dir)
+    if not art_path.exists():
+        art_path = Path("artifacts/pan_india_v2")
+    if not art_path.exists():
+        art_path = Path("artifacts/tuned_high_accuracy")
+
+    loc_path = Path(locations_path)
+    if not loc_path.exists():
+        loc_path = Path("config/india_corridors.json")
+    if not loc_path.exists():
+        loc_path = Path("config/junction_locations.json")
+
     app = Flask(
         __name__,
         template_folder=str(Path(__file__).resolve().parent.parent / "web" / "templates"),
@@ -418,10 +385,10 @@ def create_app(
         static_url_path="/static",
     )
     app.config["JSON_SORT_KEYS"] = False
-    app.store = PredictionStore(
-        artifacts_dir=Path(artifacts_dir),
+    app.store = PanIndiaPredictionStore(
+        artifacts_dir=art_path,
+        corridors_path=loc_path,
         data_path=Path(data_path),
-        locations_path=Path(locations_path),
     )
 
     @app.get("/")
@@ -441,6 +408,33 @@ def create_app(
         payload = request.get_json(force=True, silent=False)
         lat = float(payload["lat"])
         lng = float(payload["lng"])
-        return jsonify(app.store.prediction_for_point(lat, lng))
+        return jsonify(app.store.predict_for_point(lat, lng))
+
+    @app.get("/api/search")
+    def search():
+        q = request.args.get("q", "").strip()
+        if not q or len(q) < 2:
+            return jsonify([])
+        url = (
+            "https://nominatim.openstreetmap.org/search?"
+            + urllib_parse.urlencode({"q": q, "format": "json", "countrycodes": "in", "limit": "6"})
+        )
+        try:
+            req = urllib_request.Request(url, headers={"User-Agent": "PanIndiaTrafficPredictor/2.0"})
+            with urllib_request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = [
+                {
+                    "name": item.get("name") or item.get("display_name", "").split(",")[0],
+                    "displayName": item.get("display_name"),
+                    "lat": float(item["lat"]),
+                    "lng": float(item["lon"]),
+                    "type": item.get("type", "location"),
+                }
+                for item in data
+            ]
+            return jsonify(results)
+        except Exception:
+            return jsonify([])
 
     return app

@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
+from traffic_hybrid.schemas import (
+    ROAD_CLASSES,
+    compute_congestion_index as _ci_from_speeds,
+)
+
 
 def load_dataframe(path: str | Path) -> pd.DataFrame:
     source = Path(path)
@@ -73,6 +78,56 @@ def compute_reference_congestion_score(
     return pd.Series(score, index=df.index, name="reference_congestion_score")
 
 
+def compute_congestion_index_column(
+    df: pd.DataFrame,
+    current_speed_col: str = "current_speed_kmh",
+    free_flow_col: str = "free_flow_speed_kmh",
+    vehicles_col: str | None = None,
+    max_vehicles_capacity: float | None = None,
+) -> pd.Series:
+    """
+    Derive a universal, normalized Congestion Index (CI) in [0.0, 1.0] for
+    any row in a DataFrame.
+
+    Priority order:
+      1. If both ``current_speed_col`` and ``free_flow_col`` are present and
+         the free-flow column has non-zero values, compute:
+             CI = 1 - clamp(current_speed / free_flow_speed, 0, 1)
+      2. If only raw vehicle counts are available (legacy dataset format),
+         estimate CI by normalising counts against the rolling 95th-percentile
+         capacity proxy within each group.
+
+    This function is the gateway for transitioning the existing
+    ``data/traffic.csv`` vehicle-count dataset into the universal schema
+    without retraining from scratch.
+    """
+    # --- Strategy 1: speed-ratio CI (preferred, universal) ---
+    if current_speed_col in df.columns and free_flow_col in df.columns:
+        current_speed = df[current_speed_col].astype(float)
+        free_flow = df[free_flow_col].astype(float)
+        # Vectorised version of compute_congestion_index
+        ratio = (current_speed / free_flow.replace(0.0, np.nan)).clip(0.0, 1.0)
+        ci = 1.0 - ratio.fillna(0.5)  # 0.5 = unknown / moderate fallback
+        return pd.Series(ci.values, index=df.index, name="congestion_index")
+
+    # --- Strategy 2: vehicle-count proxy CI (legacy fallback) ---
+    if vehicles_col and vehicles_col in df.columns:
+        counts = df[vehicles_col].astype(float)
+        if max_vehicles_capacity is not None and max_vehicles_capacity > 0:
+            ci = (counts / max_vehicles_capacity).clip(0.0, 1.0)
+        else:
+            # Use 95th-percentile of the full series as a capacity proxy
+            capacity = counts.quantile(0.95)
+            if capacity > 0:
+                ci = (counts / capacity).clip(0.0, 1.0)
+            else:
+                ci = pd.Series(np.zeros(len(df)), index=df.index)
+        return pd.Series(ci.values, index=df.index, name="congestion_index")
+
+    # --- Strategy 3: zero-fill fallback (data missing) ---
+    return pd.Series(np.zeros(len(df)), index=df.index, name="congestion_index")
+
+
 def _groupby_series(df: pd.DataFrame, entity_col: str | None, column: str) -> pd.core.groupby.generic.SeriesGroupBy:
     if entity_col and entity_col in df.columns:
         return df.groupby(entity_col, sort=False)[column]
@@ -91,6 +146,8 @@ def add_engineered_features(
     use_temporal_features: bool,
     use_lag_features: bool,
     use_entity_one_hot: bool,
+    # Pan-India contextual features (optional — safely ignored if columns absent)
+    use_india_context: bool = True,
 ) -> pd.DataFrame:
     engineered = df.copy()
     primary_column = base_columns[0]
@@ -186,6 +243,40 @@ def add_engineered_features(
         dummies = pd.get_dummies(engineered[entity_col], prefix=entity_col.lower())
         engineered = pd.concat([engineered, dummies.astype(float)], axis=1)
 
+    # ------------------------------------------------------------------
+    # Pan-India contextual feature injection
+    # Safely passes through if the columns do not exist in the dataframe
+    # (backward compatible with the legacy 4-junction vehicle-count dataset).
+    # ------------------------------------------------------------------
+    if use_india_context:
+        # Road class one-hot encoding (from OpenStreetMap via spatial.py)
+        if "road_class" in engineered.columns:
+            for cls in ROAD_CLASSES:
+                engineered[f"road_class_{cls}"] = (
+                    engineered["road_class"].astype(str) == cls
+                ).astype(float)
+
+        # Weather: precipitation rate (from OpenWeather / Tomorrow.io)
+        if "rain_mm_per_hr" not in engineered.columns:
+            engineered["rain_mm_per_hr"] = 0.0
+
+        # Indian holiday flag (from context.py)
+        if "is_indian_holiday" not in engineered.columns:
+            engineered["is_indian_holiday"] = 0.0
+
+        # Road geometry (from OpenStreetMap via spatial.py)
+        if "lanes" not in engineered.columns:
+            engineered["lanes"] = 1.0
+        if "speed_limit_kmh" not in engineered.columns:
+            engineered["speed_limit_kmh"] = 40.0
+
+        # Universal target column: Congestion Index
+        if "congestion_index" not in engineered.columns:
+            engineered["congestion_index"] = compute_congestion_index_column(
+                engineered,
+                vehicles_col=base_columns[0] if base_columns else None,
+            )
+
     numeric_columns = engineered.select_dtypes(include=[np.number]).columns
     engineered[numeric_columns] = engineered[numeric_columns].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return engineered
@@ -263,6 +354,22 @@ def select_feature_columns(
         columns.append("congestion_transition")
     if use_entity_one_hot and entity_col:
         columns.extend(sorted([name for name in df.columns if name.startswith(f"{entity_col.lower()}_")]))
+
+    # --- Pan-India contextual features (injected by add_engineered_features) ---
+    india_context_candidates = [
+        # Road geometry (from OSM)
+        "lanes",
+        "speed_limit_kmh",
+        # Weather
+        "rain_mm_per_hr",
+        # Calendar
+        "is_indian_holiday",
+        # Universal target
+        "congestion_index",
+    ]
+    # Road class one-hot columns
+    india_context_candidates.extend([f"road_class_{cls}" for cls in ROAD_CLASSES])
+    columns.extend([name for name in india_context_candidates if name in df.columns and name not in columns])
 
     deduplicated: list[str] = []
     seen = set()

@@ -1,0 +1,277 @@
+{
+  "description": "Representative traffic monitoring anchors across Indian city archetypes (North, South, East, West, Central). Used by tools/harvest_telemetry.py to collect multi-city probe data for pan-India model training.",
+  "schema_version": "2.0",
+  "sample_interval_minutes": 5,
+  "corridors": [
+    {
+      "city": "bengaluru",
+      "state": "KA",
+      "corridor_name": "Silk Board Junction",
+      "lat": 12.9177,
+      "lng": 77.6232,
+      "road_class": "primary",
+      "description": "Most congested junction in India — ORR meets Hosur Road"
+    },
+    {
+      "city": "bengaluru",
+      "state": "KA",
+      "corridor_name": "Marathahalli Bridge",
+      "lat": 12.9592,
+      "lng": 77.6974,
+      "road_class": "primary",
+      "description": "ORR eastern peak hub serving IT parks"
+    },
+    {
+      "city": "bengaluru",
+      "state": "KA",
+      "corridor_name": "Whitefield Road",
+      "lat": 12.9698,
+      "lng": 77.7499,
+      "road_class": "primary",
+      "description": "Primary IT park access road serving EPIP Zone"
+    },
+    {
+      "city": "bengaluru",
+      "state": "KA",
+      "corridor_name": "Hebbal Flyover",
+      "lat": 13.0358,
+      "lng": 77.5970,
+      "road_class": "trunk",
+      "description": "North Bengaluru bottleneck connecting city to Airport Expressway"
+    },
+    {
+      "city": "mumbai",
+      "state": "MH",
+      "corridor_name": "Western Express Highway Andheri",
+      "lat": 19.1136,
+      "lng": 72.8697,
+      "road_class": "trunk",
+      "description": "High-speed 8-lane arterial — chronic peak-hour congestion"
+    },
+    {
+      "city": "mumbai",
+      "state": "MH",
+      "corridor_name": "Eastern Freeway Sewri",
+      "lat": 18.9922,
+      "lng": 72.8547,
+      "road_class": "motorway",
+      "description": "Mumbai's only elevated freeway"
+    },
+    {
+      "city": "mumbai",
+      "state": "MH",
+      "corridor_name": "BKC Bandra Kurla Complex",
+      "lat": 19.0596,
+      "lng": 72.8656,
+      "road_class": "primary",
+      "description": "Financial district hub with mixed residential-commercial traffic"
+    },
+    {
+      "city": "mumbai",
+      "state": "MH",
+      "corridor_name": "Sion Circle",
+      "lat": 19.0378,
+      "lng": 72.8624,
+      "road_class": "primary",
+      "description": "Key central junction distributing traffic to Island City and Suburbs"
+    },
+    {
+      "city": "delhi",
+      "state": "DL",
+      "corridor_name": "Ring Road AIIMS",
+      "lat": 28.5665,
+      "lng": 77.2100,
+      "road_class": "trunk",
+      "description": "Key arterial junction — chronic inbound congestion point"
+    },
+    {
+      "city": "delhi",
+      "state": "DL",
+      "corridor_name": "DND Flyway Noida Entry",
+      "lat": 28.5491,
+      "lng": 77.3133,
+      "road_class": "motorway",
+      "description": "Peak-hour bottleneck connecting Delhi to Noida"
+    },
+    {
+      "city": "delhi",
+      "state": "DL",
+      "corridor_name": "Cyber City Gurgaon",
+      "lat": 28.4950,
+      "lng": 77.0890,
+      "road_class": "primary",
+      "description": "Corporate campus access serving DLF Cyber Hub"
+    },
+    {
+      "city": "delhi",
+      "state": "DL",
+      "corridor_name": "ITO Junction",
+      "lat": 28.6294,
+      "lng": 77.2410,
+      "road_class": "primary",
+      "description": "Central institutional and administrative transit bottleneck"
+    },
+    {
+      "city": "pune",
+      "state": "MH",
+      "corridor_name": "Hinjawadi Phase 1",
+      "lat": 18.5912,
+      "lng": 73.7389,
+      "road_class": "primary",
+      "description": "IT SEZ entry junction — severe morning ingress congestion"
+    },
+    {
+      "city": "pune",
+      "state": "MH",
+      "corridor_name": "FC Road Shivajinagar",
+      "lat": 18.5269,
+      "lng": 73.8427,
+      "road_class": "secondary",
+      "description": "Dense commercial arterial serving student and retail areas"
+    },
+    {
+      "city": "pune",
+      "state": "MH",
+      "corridor_name": "Magarpatta City Hadapsar",
+      "lat": 18.5146,
+      "lng": 73.9312,
+      "road_class": "primary",
+      "description": "Eastern IT corridor hub along Pune-Solapur highway"
+    },
+    {
+      "city": "hyderabad",
+      "state": "TS",
+      "corridor_name": "Hitec City Cyber Towers",
+      "lat": 17.4504,
+      "lng": 78.3808,
+      "road_class": "primary",
+      "description": "Telangana's premier technology park bottleneck"
+    },
+    {
+      "city": "hyderabad",
+      "state": "TS",
+      "corridor_name": "Gachibowli Junction",
+      "lat": 17.4401,
+      "lng": 78.3489,
+      "road_class": "primary",
+      "description": "Outer Ring Road radial connector and financial district entry"
+    },
+    {
+      "city": "hyderabad",
+      "state": "TS",
+      "corridor_name": "Punjagutta Crossing",
+      "lat": 17.4265,
+      "lng": 78.4526,
+      "road_class": "primary",
+      "description": "Central commercial arterial crossing near Banjara Hills"
+    },
+    {
+      "city": "chennai",
+      "state": "TN",
+      "corridor_name": "OMR Tidel Park",
+      "lat": 12.9877,
+      "lng": 80.2520,
+      "road_class": "primary",
+      "description": "Rajiv Gandhi IT Expressway gateway at Thiruvanmiyur"
+    },
+    {
+      "city": "chennai",
+      "state": "TN",
+      "corridor_name": "Kathipara Junction Guindy",
+      "lat": 13.0067,
+      "lng": 80.2038,
+      "road_class": "trunk",
+      "description": "Massive multi-directional cloverleaf connecting Mount Road and GST Road"
+    },
+    {
+      "city": "chennai",
+      "state": "TN",
+      "corridor_name": "Anna Nagar Roundtana",
+      "lat": 13.0850,
+      "lng": 80.2100,
+      "road_class": "primary",
+      "description": "Dense retail and commercial intersection in North-West Chennai"
+    },
+    {
+      "city": "kolkata",
+      "state": "WB",
+      "corridor_name": "EM Bypass Science City",
+      "lat": 22.5408,
+      "lng": 88.3965,
+      "road_class": "trunk",
+      "description": "Eastern Metropolitan Bypass connecting North and South Kolkata"
+    },
+    {
+      "city": "kolkata",
+      "state": "WB",
+      "corridor_name": "Park Circus 7-Point Crossing",
+      "lat": 22.5413,
+      "lng": 88.3687,
+      "road_class": "primary",
+      "description": "Complex multi-way arterial junction serving central Kolkata"
+    },
+    {
+      "city": "kolkata",
+      "state": "WB",
+      "corridor_name": "Sector V Salt Lake",
+      "lat": 22.5744,
+      "lng": 88.4338,
+      "road_class": "primary",
+      "description": "Eastern India's largest IT and commercial district"
+    },
+    {
+      "city": "ahmedabad",
+      "state": "GJ",
+      "corridor_name": "SG Highway ISKCON Cross Road",
+      "lat": 23.0284,
+      "lng": 72.5068,
+      "road_class": "trunk",
+      "description": "Sarkhej-Gandhinagar expressway commercial bottleneck"
+    },
+    {
+      "city": "ahmedabad",
+      "state": "GJ",
+      "corridor_name": "Ashram Road Income Tax Circle",
+      "lat": 23.0396,
+      "lng": 72.5714,
+      "road_class": "primary",
+      "description": "CBD arterial running parallel to Sabarmati Riverfront"
+    },
+    {
+      "city": "jaipur",
+      "state": "RJ",
+      "corridor_name": "JLN Marg Jawahar Circle",
+      "lat": 26.8524,
+      "lng": 75.8054,
+      "road_class": "primary",
+      "description": "Primary North-South boulevard linking Airport to city center"
+    },
+    {
+      "city": "jaipur",
+      "state": "RJ",
+      "corridor_name": "Ajmer Road 200 Feet Bypass",
+      "lat": 26.8920,
+      "lng": 75.7360,
+      "road_class": "trunk",
+      "description": "Western transit junction connecting to Delhi-Mumbai industrial corridor"
+    },
+    {
+      "city": "kochi",
+      "state": "KL",
+      "corridor_name": "Edappally Toll Junction",
+      "lat": 10.0261,
+      "lng": 76.3125,
+      "road_class": "trunk",
+      "description": "High-volume intersection of NH 66, NH 544, and Metro interchange"
+    },
+    {
+      "city": "lucknow",
+      "state": "UP",
+      "corridor_name": "Hazratganj Crossing",
+      "lat": 26.8500,
+      "lng": 80.9490,
+      "road_class": "primary",
+      "description": "Historic city center and administrative commercial crossroads"
+    }
+  ]
+}

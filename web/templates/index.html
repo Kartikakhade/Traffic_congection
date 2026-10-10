@@ -3,127 +3,202 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Traffic Congestion Predictor</title>
+  <title>Pan-India Traffic Intelligence | Live Flow + Multi-Horizon Forecast</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-  {% if map_provider == "leaflet" %}
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   >
-  {% endif %}
 </head>
 <body>
   <div class="page-shell">
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Map-Based Live Traffic + Forecast</p>
-        <h1>Click a junction area on the map and see today's traffic in plain language.</h1>
+        <div class="hero-tagline">
+          <span class="live-pulse"></span>
+          <span class="eyebrow">Pan-India Real-Time Traffic AI • 11 Metropolitan Archetypes</span>
+        </div>
+        <h1>Intelligent Traffic Forecasting Across India</h1>
         <p class="hero-text">
-          The app checks live TomTom traffic at the clicked point when available, then shows the trained model's next forecast window for the nearest configured junction.
+          Click any road or junction across India to query live TomTom flow speeds, extract OpenStreetMap road attributes, and forecast future congestion states (+15m, +30m, +60m) using our generalized BiLSTM + XGBoost hybrid model.
         </p>
+
+        <!-- Quick Jump City Bar -->
+        <div class="city-chips-bar">
+          <span class="chips-label">Quick Jump:</span>
+          <div class="city-chips" id="cityChips">
+            <button class="city-chip active" data-city="all">All India</button>
+            <button class="city-chip" data-city="Delhi-NCR">Delhi-NCR</button>
+            <button class="city-chip" data-city="Mumbai">Mumbai</button>
+            <button class="city-chip" data-city="Bengaluru">Bengaluru</button>
+            <button class="city-chip" data-city="Hyderabad">Hyderabad</button>
+            <button class="city-chip" data-city="Chennai">Chennai</button>
+            <button class="city-chip" data-city="Kolkata">Kolkata</button>
+            <button class="city-chip" data-city="Pune">Pune</button>
+            <button class="city-chip" data-city="Ahmedabad">Ahmedabad</button>
+            <button class="city-chip" data-city="Jaipur">Jaipur</button>
+            <button class="city-chip" data-city="Lucknow">Lucknow</button>
+            <button class="city-chip" data-city="Kochi">Kochi</button>
+          </div>
+        </div>
       </div>
+
       <div class="hero-meta">
         <div class="meta-card">
-          <span class="meta-label">Live Source</span>
-          <strong>TomTom traffic flow</strong>
+          <span class="meta-label">Live Telemetry</span>
+          <strong>TomTom Flow API</strong>
+          <span class="meta-sub">30 Corridors Monitored</span>
         </div>
         <div class="meta-card">
-          <span class="meta-label">Forecast Model</span>
-          <strong>BiLSTM + Attention + XGBoost</strong>
+          <span class="meta-label">Forecast Engine</span>
+          <strong>BiLSTM + XGBoost</strong>
+          <span class="meta-sub">Attention Pooling</span>
         </div>
-        <div class="meta-card">
-          <span class="meta-label">Forecast Accuracy</span>
-          <strong>87.663% strict validation</strong>
+        <div class="meta-card highlight">
+          <span class="meta-label">Target Metric</span>
+          <strong>Congestion Index</strong>
+          <span class="meta-sub">Universal $CI \in [0, 1]$</span>
         </div>
       </div>
     </header>
 
     <main class="dashboard">
       <section class="map-panel">
-        <div class="panel-header">
-          <div>
-            <p class="panel-kicker">Location Input</p>
-            <h2>Select On Map</h2>
+        <div class="search-bar-container">
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="text"
+              id="locationSearchInput"
+              placeholder="Search any road, landmark, or area in India (e.g. Cyber Hub, BKC, Silk Board)..."
+              autocomplete="off"
+            >
+            <button id="clearSearchBtn" class="clear-btn" style="display: none;">&times;</button>
           </div>
-          <div class="provider-pill">Map fallback</div>
+          <div id="searchResultsDropdown" class="search-dropdown" style="display: none;"></div>
         </div>
-        <div id="map" class="map-frame" aria-label="Traffic prediction map"></div>
+
+        <div id="map" class="map-frame" aria-label="Pan-India Traffic Prediction Map"></div>
+        
         <div class="map-help">
-          <span>Click anywhere on the map.</span>
-          <span>The app only predicts when the clicked point is close enough to a real configured junction.</span>
+          <span class="map-hint">💡 <strong>Click anywhere on the map</strong> to inspect that road segment's live flow, OSM attributes, and ML forecasts.</span>
+          <span id="activeCoordinates" class="active-coords">Map ready • Click to inspect</span>
         </div>
       </section>
 
       <aside class="info-panel">
+        <!-- Live Status Card -->
         <section class="status-card" id="statusCard">
           <div class="status-topline">
-            <span class="status-label">Today's Junction Status</span>
-            <span class="status-badge" id="statusBadge">Waiting for selection</span>
+            <span class="status-label">Current Segment Status</span>
+            <span class="status-badge" id="statusBadge">Select on Map</span>
           </div>
-          <h2 id="predictionTitle">Choose a point to begin</h2>
-          <p id="predictionSummary">The app will only show a result when the click can be matched safely to a real junction.</p>
+          <h2 id="predictionTitle">Choose a Road to Begin</h2>
+          <p id="predictionSummary">Click anywhere on the map or use the search bar above to see live speed, road classification, and multi-horizon AI forecasts.</p>
+          
+          <div class="tag-row" id="tagRow">
+            <span class="pill-tag road-class" id="roadClassBadge">ROAD: -</span>
+            <span class="pill-tag lanes" id="lanesBadge">LANES: -</span>
+            <span class="pill-tag speed-limit" id="speedLimitBadge">LIMIT: -</span>
+            <span class="pill-tag weather" id="weatherBadge">WEATHER: -</span>
+          </div>
         </section>
 
+        <!-- Live Metrics Grid -->
         <section class="details-grid">
           <article class="detail-card">
-            <span class="detail-label">Nearest Junction</span>
-            <strong id="junctionName">-</strong>
-            <p id="junctionDescription">Click on the map to match a location.</p>
+            <span class="detail-label">Current Speed</span>
+            <strong id="liveCurrentSpeed" class="stat-big">-</strong>
+            <p id="liveSpeedText">Speed on observed road</p>
           </article>
           <article class="detail-card">
-            <span class="detail-label">Distance From Pin</span>
-            <strong id="junctionDistance">-</strong>
-            <p>Calculated from the clicked point to the nearest configured junction.</p>
+            <span class="detail-label">Free-Flow Speed</span>
+            <strong id="liveFreeFlowSpeed" class="stat-big">-</strong>
+            <p id="freeFlowText">Uncongested speed</p>
           </article>
           <article class="detail-card">
-            <span class="detail-label">Live Delay Vs Free Flow</span>
-            <strong id="liveDelay">-</strong>
-            <p id="liveDelayText">-</p>
+            <span class="detail-label">Congestion Index</span>
+            <strong id="liveCongestionIndex" class="stat-big">-</strong>
+            <p id="ciText">Normalized $0.0$ (free) to $1.0$ (gridlock)</p>
           </article>
           <article class="detail-card">
-            <span class="detail-label">Live Snapshot Time</span>
-            <strong id="liveTime">-</strong>
-            <p id="liveTimeText">-</p>
-          </article>
-          <article class="detail-card">
-            <span class="detail-label">Model Forecast Window</span>
-            <strong id="forecastTime">-</strong>
-            <p id="forecastWindowText">-</p>
-          </article>
-          <article class="detail-card">
-            <span class="detail-label">Forecasted Vehicles</span>
-            <strong id="predictedVehicles">-</strong>
-            <p>The trained model's expected average vehicle count for the next 3 hours.</p>
-          </article>
-          <article class="detail-card">
-            <span class="detail-label">Latest Observed Vehicles</span>
-            <strong id="latestObservedVehicles">-</strong>
-            <p id="latestObservedTime">-</p>
+            <span class="detail-label">Delay Overhead</span>
+            <strong id="liveDelayPercent" class="stat-big">-</strong>
+            <p id="delayText">Delay vs free-flow transit</p>
           </article>
         </section>
 
-        <section class="trend-card">
-          <div class="panel-header compact">
+        <!-- Multi-Horizon Forecast Section -->
+        <section class="forecast-section">
+          <div class="section-title-row">
             <div>
-              <p class="panel-kicker">Recent Pattern</p>
-              <h2>Observed Traffic And Forecast</h2>
+              <p class="panel-kicker">AI Forecast Horizon</p>
+              <h3>Future Congestion Windows</h3>
+            </div>
+            <span class="model-badge">Hybrid BiLSTM+XGB</span>
+          </div>
+
+          <div class="forecast-cards-grid" id="forecastCardsGrid">
+            <!-- 15m Forecast -->
+            <div class="fc-card" id="fcCard15">
+              <div class="fc-header">
+                <span class="fc-horizon">+15 Min</span>
+                <span class="fc-time" id="fcTime15">--:--</span>
+              </div>
+              <div class="fc-body">
+                <span class="fc-ci" id="fcCi15">-</span>
+                <span class="fc-pill" id="fcPill15">Pending</span>
+              </div>
+              <p class="fc-speed" id="fcSpeed15">Est. Speed: - km/h</p>
+            </div>
+
+            <!-- 30m Forecast -->
+            <div class="fc-card" id="fcCard30">
+              <div class="fc-header">
+                <span class="fc-horizon">+30 Min</span>
+                <span class="fc-time" id="fcTime30">--:--</span>
+              </div>
+              <div class="fc-body">
+                <span class="fc-ci" id="fcCi30">-</span>
+                <span class="fc-pill" id="fcPill30">Pending</span>
+              </div>
+              <p class="fc-speed" id="fcSpeed30">Est. Speed: - km/h</p>
+            </div>
+
+            <!-- 60m Forecast -->
+            <div class="fc-card" id="fcCard60">
+              <div class="fc-header">
+                <span class="fc-horizon">+60 Min</span>
+                <span class="fc-time" id="fcTime60">--:--</span>
+              </div>
+              <div class="fc-body">
+                <span class="fc-ci" id="fcCi60">-</span>
+                <span class="fc-pill" id="fcPill60">Pending</span>
+              </div>
+              <p class="fc-speed" id="fcSpeed60">Est. Speed: - km/h</p>
             </div>
           </div>
-          <svg id="trendChart" viewBox="0 0 620 240" class="trend-chart" role="img" aria-label="Traffic trend chart"></svg>
-          <div class="trend-legend">
-            <span><i class="legend-dot history"></i>Recent observed traffic</span>
-            <span><i class="legend-dot forecast"></i>Model forecast values</span>
-          </div>
         </section>
 
+        <!-- Spatial Anchoring Footnote -->
         <section class="footnote-card">
-          <p id="dataWindowText">Loading available time window...</p>
-          <p class="muted" id="sourceNote">Live TomTom traffic needs TOMTOM_API_KEY. The app blocks unsafe long-distance junction matches.</p>
+          <div class="anchor-info">
+            <span class="anchor-label">Nearest Monitored Corridor:</span>
+            <strong id="nearestAnchorText">Silk Board Junction, Bengaluru</strong>
+          </div>
+          <div class="h3-info">
+            <span class="anchor-label">Uber H3 Cell Index:</span>
+            <code id="h3IndexText">Resolution 8 Hex</code>
+          </div>
+          <p class="muted" id="sourceNote">Real-time probe telemetry enriched with OpenStreetMap functional road classes and holiday calendar context.</p>
         </section>
       </aside>
     </main>

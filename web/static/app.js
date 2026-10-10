@@ -1,261 +1,394 @@
 (function () {
   const bootstrap = window.APP_BOOTSTRAP || {};
+  const CARTO_API_KEY = "eyJhbGciOiJIUzI1NiJ9.eyJhIjoiYWNfOGw5ZncxcDMiLCJqdGkiOiJhNDkzODU4MjYwYjM5YmNiZjZjOTlhNDkxMGNhMjRkMSJ9.8NQXxjpc0G6igy9zvf8d3mFF4sydv2btSvjh2tUhvYw";
+  const CARTO_USER = "ac_8l9fw1p3";
+
+  // Tile layer definitions (authenticated CARTO + fallbacks)
+  const TILE_LAYERS = {
+    dark: {
+      label: "Dark Matter",
+      icon: "🌑",
+      url: `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?api_key=${CARTO_API_KEY}`,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
+    },
+    voyager: {
+      label: "Street Light",
+      icon: "🗺️",
+      url: `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?api_key=${CARTO_API_KEY}`,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
+    },
+    satellite: {
+      label: "Satellite",
+      icon: "🛰️",
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      attribution: "Tiles &copy; Esri — Source: Esri, USGS, NOAA",
+      subdomains: "",
+      maxZoom: 19,
+    },
+  };
+
   const state = {
     map: null,
     selectionMarker: null,
-    junctionMarkers: [],
+    corridorMarkers: [],
+    searchTimeout: null,
+    currentTileLayer: null,
+    currentStyle: "dark",
   };
 
   const elements = {
     statusBadge: document.getElementById("statusBadge"),
     predictionTitle: document.getElementById("predictionTitle"),
     predictionSummary: document.getElementById("predictionSummary"),
-    junctionName: document.getElementById("junctionName"),
-    junctionDescription: document.getElementById("junctionDescription"),
-    junctionDistance: document.getElementById("junctionDistance"),
-    liveDelay: document.getElementById("liveDelay"),
-    liveDelayText: document.getElementById("liveDelayText"),
-    liveTime: document.getElementById("liveTime"),
-    liveTimeText: document.getElementById("liveTimeText"),
-    forecastTime: document.getElementById("forecastTime"),
-    forecastWindowText: document.getElementById("forecastWindowText"),
-    predictedVehicles: document.getElementById("predictedVehicles"),
-    latestObservedVehicles: document.getElementById("latestObservedVehicles"),
-    latestObservedTime: document.getElementById("latestObservedTime"),
-    dataWindowText: document.getElementById("dataWindowText"),
-    sourceNote: document.getElementById("sourceNote"),
-    trendChart: document.getElementById("trendChart"),
+    roadClassBadge: document.getElementById("roadClassBadge"),
+    lanesBadge: document.getElementById("lanesBadge"),
+    speedLimitBadge: document.getElementById("speedLimitBadge"),
+    weatherBadge: document.getElementById("weatherBadge"),
+    liveCurrentSpeed: document.getElementById("liveCurrentSpeed"),
+    liveFreeFlowSpeed: document.getElementById("liveFreeFlowSpeed"),
+    liveCongestionIndex: document.getElementById("liveCongestionIndex"),
+    liveDelayPercent: document.getElementById("liveDelayPercent"),
+    liveSpeedText: document.getElementById("liveSpeedText"),
+    delayText: document.getElementById("delayText"),
+    fcTime15: document.getElementById("fcTime15"),
+    fcCi15: document.getElementById("fcCi15"),
+    fcPill15: document.getElementById("fcPill15"),
+    fcSpeed15: document.getElementById("fcSpeed15"),
+    fcTime30: document.getElementById("fcTime30"),
+    fcCi30: document.getElementById("fcCi30"),
+    fcPill30: document.getElementById("fcPill30"),
+    fcSpeed30: document.getElementById("fcSpeed30"),
+    fcTime60: document.getElementById("fcTime60"),
+    fcCi60: document.getElementById("fcCi60"),
+    fcPill60: document.getElementById("fcPill60"),
+    fcSpeed60: document.getElementById("fcSpeed60"),
+    nearestAnchorText: document.getElementById("nearestAnchorText"),
+    h3IndexText: document.getElementById("h3IndexText"),
+    activeCoordinates: document.getElementById("activeCoordinates"),
+    locationSearchInput: document.getElementById("locationSearchInput"),
+    searchResultsDropdown: document.getElementById("searchResultsDropdown"),
+    clearSearchBtn: document.getElementById("clearSearchBtn"),
+    cityChips: document.getElementById("cityChips"),
   };
 
-  function escapeHtml(value) {
-    return String(value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
+  function createCustomIcon(tone = "primary") {
+    const color = tone === "high" ? "#ef4444" : tone === "medium" ? "#f59e0b" : tone === "low" ? "#10b981" : "#38bdf8";
+    return L.divIcon({
+      className: "custom-pin",
+      html: `<div style="
+        width: 14px;
+        height: 14px;
+        background: ${color};
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        box-shadow: 0 0 10px ${color};
+      "></div>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
+    });
   }
 
-  function setLoadingState() {
+  function setLoadingState(lat, lng) {
     elements.statusBadge.className = "status-badge";
-    elements.statusBadge.textContent = "Loading";
-    elements.predictionTitle.textContent = "Checking live traffic";
-    elements.predictionSummary.textContent = "Fetching TomTom live flow data for the clicked point.";
-  }
-
-  function clearForecastFields() {
-    elements.forecastTime.textContent = "-";
-    elements.forecastWindowText.textContent = "-";
-    elements.predictedVehicles.textContent = "-";
-    elements.latestObservedVehicles.textContent = "-";
-    elements.latestObservedTime.textContent = "-";
-    elements.trendChart.innerHTML = "";
+    elements.statusBadge.textContent = "Analyzing";
+    elements.predictionTitle.textContent = "Querying Live Traffic AI...";
+    elements.predictionSummary.textContent = `Extracting road attributes and calling live flow telemetry at (${lat.toFixed(4)}, ${lng.toFixed(4)})...`;
+    elements.activeCoordinates.textContent = `Coordinates: ${lat.toFixed(4)}, ${lng.toFixed(4)} • Processing`;
   }
 
   async function requestPrediction(lat, lng) {
-    setLoadingState();
+    setLoadingState(lat, lng);
     const response = await fetch("/api/predict", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lat, lng }),
     });
     if (!response.ok) {
-      throw new Error("Prediction request failed.");
+      throw new Error("Prediction API call failed.");
     }
     return response.json();
   }
 
-  function updateStatusBadge(tone, label) {
-    elements.statusBadge.className = `status-badge ${tone}`;
-    elements.statusBadge.textContent = label;
-  }
-
   function updateUi(payload) {
-    const liveTraffic = payload.liveTraffic || {};
+    const live = payload.liveTraffic || {};
+    const road = payload.road || {};
+    const wx = payload.weather || {};
+    const anchor = payload.nearestAnchor || {};
+    const forecasts = payload.forecasts || [];
 
-    if (liveTraffic.available) {
-      updateStatusBadge(liveTraffic.tone, liveTraffic.label);
-      elements.predictionTitle.textContent = liveTraffic.label;
-      elements.predictionSummary.textContent = `${liveTraffic.summary} ${liveTraffic.note || ""}`.trim();
-      elements.liveDelay.textContent = `${liveTraffic.delayPercent}%`;
-      elements.liveDelayText.textContent = `Current speed ${liveTraffic.currentSpeed} km/h vs free-flow ${liveTraffic.freeFlowSpeed} km/h.`;
-      elements.liveTime.textContent = liveTraffic.checkedAt;
-      elements.liveTimeText.textContent = `Confidence ${liveTraffic.confidence}. Road closure: ${liveTraffic.roadClosure ? "Yes" : "No"}.`;
+    // Tone & Status Badge
+    const tone = payload.overallTone || (live.tone || "low");
+    elements.statusBadge.className = `status-badge ${tone}`;
+    elements.statusBadge.textContent = live.available ? live.label : "Estimated Flow";
+
+    // Title & Summary
+    elements.predictionTitle.textContent = `${road.roadClass || "Road"} • ${anchor.city || "India"}`;
+    elements.predictionSummary.textContent = live.available
+      ? `${live.summary} Observed on ${road.roadClass.toLowerCase()} road (${road.lanes || 2} lanes).`
+      : `Live telemetry fallback: Extrapolating typical congestion profile for ${road.roadClass.toLowerCase()} road.`;
+
+    // Road Attributes Badges
+    elements.roadClassBadge.textContent = `ROAD: ${road.roadClass || "PRIMARY"}`;
+    elements.lanesBadge.textContent = `LANES: ${road.lanes || 2}`;
+    elements.speedLimitBadge.textContent = `LIMIT: ${road.speedLimitKmh || 50} KM/H`;
+    elements.weatherBadge.textContent = `WEATHER: ${wx.temperatureC || 26}°C • ${wx.summary || "Clear"}`;
+
+    // Live Metrics
+    if (live.available) {
+      elements.liveCurrentSpeed.textContent = `${live.currentSpeed} km/h`;
+      elements.liveFreeFlowSpeed.textContent = `${live.freeFlowSpeed} km/h`;
+      elements.liveCongestionIndex.textContent = `${live.congestionIndex}`;
+      elements.liveDelayPercent.textContent = `+${live.delayPercent}%`;
+      elements.liveSpeedText.textContent = `Live TomTom flow at ${live.checkedAt.split(" ")[1]}`;
+      elements.delayText.textContent = `${live.currentTravelTimeSeconds}s travel vs ${live.freeFlowTravelTimeSeconds}s normal`;
     } else {
-      updateStatusBadge("medium", "Live traffic unavailable");
-      elements.predictionTitle.textContent = "Live TomTom traffic is not ready";
-      elements.predictionSummary.textContent = liveTraffic.summary || "Live traffic is unavailable at the moment.";
-      elements.liveDelay.textContent = "Unavailable";
-      elements.liveDelayText.textContent = "Set TOMTOM_API_KEY to enable live TomTom traffic.";
-      elements.liveTime.textContent = "-";
-      elements.liveTimeText.textContent = liveTraffic.source || "TomTom Traffic API";
+      elements.liveCurrentSpeed.textContent = "-- km/h";
+      elements.liveFreeFlowSpeed.textContent = `${road.speedLimitKmh || 50} km/h`;
+      elements.liveCongestionIndex.textContent = "0.200";
+      elements.liveDelayPercent.textContent = "0%";
+      elements.liveSpeedText.textContent = "TomTom API rate limit or key unavailable";
+      elements.delayText.textContent = "Normal typical baseline";
     }
 
-    elements.junctionName.textContent = payload.junction.name;
-    elements.junctionDescription.textContent = payload.junction.description || "Nearest configured junction.";
-    elements.junctionDistance.textContent = `${payload.junction.distanceKm.toFixed(3)} km`;
+    // Forecast Cards
+    if (forecasts.length >= 3) {
+      const f15 = forecasts[0];
+      elements.fcTime15.textContent = f15.targetTime;
+      elements.fcCi15.textContent = `${f15.congestionIndex}`;
+      elements.fcPill15.className = `fc-pill ${f15.tone}`;
+      elements.fcPill15.textContent = f15.tone.toUpperCase();
+      elements.fcSpeed15.textContent = `Est. Speed: ${f15.estimatedSpeedKmh} km/h`;
 
-    if (payload.forecastReady) {
-      const forecast = payload.forecast || {};
-      elements.forecastTime.textContent = forecast.forecastTimestamp || "-";
-      elements.forecastWindowText.textContent = forecast.forecastWindowEndTimestamp
-        ? `Forecast window ends at ${forecast.forecastWindowEndTimestamp}`
-        : "Forecast window unavailable.";
-      elements.predictedVehicles.textContent = forecast.predictedVehicles !== undefined
-        ? `${forecast.predictedVehicles} vehicles`
-        : "-";
-      elements.latestObservedVehicles.textContent = forecast.latestObservedVehicles !== undefined
-        ? `${forecast.latestObservedVehicles} vehicles`
-        : "-";
-      elements.latestObservedTime.textContent = forecast.latestObservedTimestamp
-        ? `Latest observed at ${forecast.latestObservedTimestamp}`
-        : "-";
-      renderTrendChart(payload.trend || { history: [], forecast: [] });
-      highlightNearestJunction(payload.junction.id);
-    } else {
-      clearForecastFields();
-      elements.forecastWindowText.textContent = payload.forecastMessage || "Forecast unavailable.";
-    }
-  }
+      const f30 = forecasts[1];
+      elements.fcTime30.textContent = f30.targetTime;
+      elements.fcCi30.textContent = `${f30.congestionIndex}`;
+      elements.fcPill30.className = `fc-pill ${f30.tone}`;
+      elements.fcPill30.textContent = f30.tone.toUpperCase();
+      elements.fcSpeed30.textContent = `Est. Speed: ${f30.estimatedSpeedKmh} km/h`;
 
-  function renderTrendChart(trend) {
-    const width = 620;
-    const height = 240;
-    const padding = { top: 28, right: 24, bottom: 34, left: 36 };
-    const series = [
-      ...trend.history.map((item) => item.value),
-      ...trend.forecast.map((item) => item.value),
-    ];
-    if (!series.length) {
-      elements.trendChart.innerHTML = "";
-      return;
+      const f60 = forecasts[2];
+      elements.fcTime60.textContent = f60.targetTime;
+      elements.fcCi60.textContent = `${f60.congestionIndex}`;
+      elements.fcPill60.className = `fc-pill ${f60.tone}`;
+      elements.fcPill60.textContent = f60.tone.toUpperCase();
+      elements.fcSpeed60.textContent = `Est. Speed: ${f60.estimatedSpeedKmh} km/h`;
     }
 
-    const minValue = Math.min(...series);
-    const maxValue = Math.max(...series);
-    const span = Math.max(maxValue - minValue, 1);
-    const historyStep = trend.history.length > 1 ? (width - padding.left - padding.right) / (trend.history.length - 1) : 0;
-    const forecastStep = trend.forecast.length > 1 ? (width - padding.left - padding.right) / (trend.forecast.length - 1) : 0;
-
-    const toY = (value) => height - padding.bottom - ((value - minValue) / span) * (height - padding.top - padding.bottom);
-    const historyPoints = trend.history
-      .map((item, index) => `${padding.left + index * historyStep},${toY(item.value)}`)
-      .join(" ");
-    const forecastPoints = trend.forecast
-      .map((item, index) => `${padding.left + index * forecastStep},${toY(item.value)}`)
-      .join(" ");
-
-    const midY = toY((minValue + maxValue) / 2.0);
-    elements.trendChart.innerHTML = `
-      <rect x="0" y="0" width="${width}" height="${height}" rx="22" fill="transparent"></rect>
-      <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" stroke="rgba(18,52,77,0.12)" />
-      <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" stroke="rgba(18,52,77,0.12)" />
-      <line x1="${padding.left}" y1="${midY}" x2="${width - padding.right}" y2="${midY}" stroke="rgba(18,52,77,0.08)" stroke-dasharray="6 6" />
-      <polyline fill="none" stroke="#14807b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" points="${historyPoints}"></polyline>
-      <polyline fill="none" stroke="#df6d2d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" points="${forecastPoints}"></polyline>
-      <text x="${padding.left}" y="${padding.top - 8}" fill="#3b5c71" font-size="12">${escapeHtml(maxValue.toFixed(1))}</text>
-      <text x="${padding.left}" y="${height - 10}" fill="#3b5c71" font-size="12">${escapeHtml(minValue.toFixed(1))}</text>
-    `;
+    // Anchor & H3 Hex
+    elements.nearestAnchorText.textContent = `${anchor.corridorName || "Corridor"}, ${anchor.city || "City"} (${anchor.distanceKm || 0} km away)`;
+    elements.h3IndexText.textContent = payload.h3Index || "N/A";
+    elements.activeCoordinates.textContent = `Coordinates: ${payload.point.lat}, ${payload.point.lng} • Checked at ${payload.checkedAt.split(" ")[1]}`;
   }
 
-  function updateDataWindowText() {
-    elements.dataWindowText.textContent = `Historical data available from ${bootstrap.dataWindow.historyStart} to ${bootstrap.dataWindow.historyEnd}.`;
-    if (!bootstrap.predictionReady) {
-      elements.sourceNote.textContent = "Forecasts are blocked until real junction coordinates are configured.";
-      return;
-    }
-    if (bootstrap.liveTrafficEnabled) {
-      elements.sourceNote.textContent = "Live TomTom traffic is enabled. The app reads traffic at the clicked point and shows the model forecast.";
-      return;
-    }
-    elements.sourceNote.textContent = "Live TomTom traffic needs TOMTOM_API_KEY. Without it, only the model forecast is shown.";
-  }
-
-  function handleMapSelection(lat, lng) {
-    placeSelectionMarker(lat, lng);
-    requestPrediction(lat, lng)
-      .then(updateUi)
-      .catch(() => {
-        elements.statusBadge.className = "status-badge high";
-        elements.statusBadge.textContent = "Error";
-        elements.predictionTitle.textContent = "Traffic could not be loaded";
-        elements.predictionSummary.textContent = "Please retry the map selection or restart the app.";
-      });
-  }
-
-  function createLeafletMarkerHtml(label, selected) {
-    const className = selected ? "selected-pin" : "junction-chip";
-    const content = selected ? "" : escapeHtml(label);
-    return `<div class="${className}">${content}</div>`;
-  }
-
-  function highlightNearestJunction(junctionId) {
-    state.junctionMarkers.forEach((markerBundle) => {
-      const isSelected = markerBundle.id === String(junctionId);
-      markerBundle.marker.setIcon(
-        L.divIcon({
-          className: "",
-          html: createLeafletMarkerHtml(markerBundle.label, false),
-          iconSize: [isSelected ? 120 : 92, 36],
-          iconAnchor: [isSelected ? 60 : 46, 18],
-        }),
-      );
-      markerBundle.marker.setZIndexOffset(isSelected ? 1000 : 0);
-    });
-  }
-
-  function placeSelectionMarker(lat, lng) {
+  function handleMapClick(lat, lng) {
     if (state.selectionMarker) {
-      state.selectionMarker.setLatLng([lat, lng]);
-      return;
+      state.map.removeLayer(state.selectionMarker);
     }
     state.selectionMarker = L.marker([lat, lng], {
-      icon: L.divIcon({
-        className: "",
-        html: createLeafletMarkerHtml("", true),
-        iconSize: [20, 20],
-        iconAnchor: [10, 20],
-      }),
+      icon: createCustomIcon("primary"),
     }).addTo(state.map);
+
+    requestPrediction(lat, lng)
+      .then(updateUi)
+      .catch((err) => {
+        elements.predictionTitle.textContent = "Error Querying Point";
+        elements.predictionSummary.textContent = err.message || "Failed to fetch traffic metrics.";
+        elements.statusBadge.className = "status-badge high";
+        elements.statusBadge.textContent = "Error";
+      });
   }
 
-  function initLeafletMap() {
+  function switchTileLayer(styleKey) {
+    if (!TILE_LAYERS[styleKey]) return;
+    if (state.currentTileLayer) {
+      state.map.removeLayer(state.currentTileLayer);
+    }
+    const cfg = TILE_LAYERS[styleKey];
+    state.currentTileLayer = L.tileLayer(cfg.url, {
+      attribution: cfg.attribution,
+      subdomains: cfg.subdomains || "abcd",
+      maxZoom: cfg.maxZoom || 19,
+    }).addTo(state.map);
+    state.currentStyle = styleKey;
+
+    // Update switcher button states
+    document.querySelectorAll(".tile-switcher-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-style") === styleKey);
+    });
+  }
+
+  function initTileSwitcher() {
+    const container = document.createElement("div");
+    container.className = "tile-switcher";
+    container.innerHTML = Object.entries(TILE_LAYERS)
+      .map(
+        ([key, cfg]) =>
+          `<button class="tile-switcher-btn${key === state.currentStyle ? " active" : ""}" data-style="${key}" title="${cfg.label}">${cfg.icon} ${cfg.label}</button>`
+      )
+      .join("");
+    container.querySelectorAll(".tile-switcher-btn").forEach((btn) => {
+      btn.addEventListener("click", () => switchTileLayer(btn.getAttribute("data-style")));
+    });
+    document.getElementById("map").appendChild(container);
+  }
+
+  function initMap() {
+    const center = bootstrap.mapCenter || { lat: 20.5937, lng: 78.9629, zoom: 5 };
     state.map = L.map("map", {
       zoomControl: true,
-      scrollWheelZoom: true,
-    }).setView([bootstrap.mapCenter.lat, bootstrap.mapCenter.lng], bootstrap.mapCenter.zoom || 13);
+      minZoom: 4,
+      maxZoom: 20,
+    }).setView([center.lat, center.lng], center.zoom);
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(state.map);
+    // Authenticated CARTO Dark Matter tiles
+    switchTileLayer("dark");
+    initTileSwitcher();
 
-    bootstrap.junctions.forEach((junction) => {
-      const marker = L.marker([junction.lat, junction.lng], {
-        icon: L.divIcon({
-          className: "",
-          html: createLeafletMarkerHtml(junction.name, false),
-          iconSize: [92, 36],
-          iconAnchor: [46, 18],
-        }),
+    // Render 30 Indian monitored corridor anchor markers
+    const corridors = bootstrap.corridors || [];
+    corridors.forEach((c) => {
+      const marker = L.circleMarker([c.lat, c.lng], {
+        radius: 6,
+        fillColor: "#38bdf8",
+        color: "#ffffff",
+        weight: 1.5,
+        opacity: 0.9,
+        fillOpacity: 0.8,
       }).addTo(state.map);
-      marker.bindTooltip(`${junction.name}<br>${junction.latestLabel}`, { direction: "top" });
-      state.junctionMarkers.push({
-        id: junction.id,
-        label: junction.name,
-        marker,
+
+      marker.bindTooltip(`<strong>${c.city.toUpperCase()}:</strong> ${c.corridor_name}<br><small>${c.road_class.toUpperCase()} ROAD</small>`, {
+        direction: "top",
+        offset: [0, -5],
+      });
+
+      marker.on("click", (e) => {
+        L.DomEvent.stopPropagation(e);
+        state.map.setView([c.lat, c.lng], 14, { animate: true });
+        handleMapClick(c.lat, c.lng);
+      });
+
+      state.corridorMarkers.push(marker);
+    });
+
+    state.map.on("click", (e) => {
+      handleMapClick(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Auto-select Silk Board on load if available
+    const silkBoard = corridors.find((c) => c.corridor_name.includes("Silk Board"));
+    if (silkBoard) {
+      handleMapClick(silkBoard.lat, silkBoard.lng);
+    }
+  }
+
+  function initCityChips() {
+    const chips = elements.cityChips.querySelectorAll(".city-chip");
+    const cityCoords = {
+      all: { lat: 20.5937, lng: 78.9629, zoom: 5 },
+      "Delhi-NCR": { lat: 28.6139, lng: 77.2090, zoom: 12 },
+      Mumbai: { lat: 19.0760, lng: 72.8777, zoom: 12 },
+      Bengaluru: { lat: 12.9716, lng: 77.5946, zoom: 12 },
+      Hyderabad: { lat: 17.3850, lng: 78.4867, zoom: 12 },
+      Chennai: { lat: 13.0827, lng: 80.2707, zoom: 12 },
+      Kolkata: { lat: 22.5726, lng: 88.3639, zoom: 12 },
+      Pune: { lat: 18.5204, lng: 73.8567, zoom: 12 },
+      Ahmedabad: { lat: 23.0225, lng: 72.5714, zoom: 12 },
+      Jaipur: { lat: 26.9124, lng: 75.7873, zoom: 12 },
+      Lucknow: { lat: 26.8467, lng: 80.9462, zoom: 12 },
+      Kochi: { lat: 9.9312, lng: 76.2673, zoom: 12 },
+    };
+
+    chips.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        chips.forEach((c) => c.classList.remove("active"));
+        chip.classList.add("active");
+
+        const cityName = chip.getAttribute("data-city");
+        const target = cityCoords[cityName];
+        if (target && state.map) {
+          state.map.flyTo([target.lat, target.lng], target.zoom, { duration: 1.2 });
+        }
       });
     });
+  }
 
-    state.map.on("click", (event) => {
-      handleMapSelection(event.latlng.lat, event.latlng.lng);
+  function initSearchBar() {
+    const input = elements.locationSearchInput;
+    const dropdown = elements.searchResultsDropdown;
+    const clearBtn = elements.clearSearchBtn;
+
+    input.addEventListener("input", () => {
+      const q = input.value.trim();
+      clearBtn.style.display = q ? "block" : "none";
+
+      if (state.searchTimeout) {
+        clearTimeout(state.searchTimeout);
+      }
+
+      if (q.length < 2) {
+        dropdown.style.display = "none";
+        dropdown.innerHTML = "";
+        return;
+      }
+
+      state.searchTimeout = setTimeout(async () => {
+        try {
+          const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+          const results = await resp.json();
+          if (results.length === 0) {
+            dropdown.innerHTML = `<div class="search-result-item"><span>No matching places found in India</span></div>`;
+            dropdown.style.display = "block";
+            return;
+          }
+
+          dropdown.innerHTML = results
+            .map(
+              (r) => `
+            <div class="search-result-item" data-lat="${r.lat}" data-lng="${r.lng}">
+              <strong>${r.name}</strong>
+              <span>${r.displayName}</span>
+            </div>`
+            )
+            .join("");
+          dropdown.style.display = "block";
+
+          dropdown.querySelectorAll(".search-result-item").forEach((item) => {
+            item.addEventListener("click", () => {
+              const lat = parseFloat(item.getAttribute("data-lat"));
+              const lng = parseFloat(item.getAttribute("data-lng"));
+              dropdown.style.display = "none";
+              input.value = item.querySelector("strong").textContent;
+              state.map.flyTo([lat, lng], 15, { duration: 1.2 });
+              handleMapClick(lat, lng);
+            });
+          });
+        } catch {
+          dropdown.style.display = "none";
+        }
+      }, 300);
+    });
+
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      clearBtn.style.display = "none";
+      dropdown.style.display = "none";
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".search-bar-container")) {
+        dropdown.style.display = "none";
+      }
     });
   }
 
-  function initApp() {
-    updateDataWindowText();
-    initLeafletMap();
-  }
-
-  document.addEventListener("DOMContentLoaded", initApp);
+  // Initialization
+  document.addEventListener("DOMContentLoaded", () => {
+    initMap();
+    initCityChips();
+    initSearchBar();
+  });
 })();

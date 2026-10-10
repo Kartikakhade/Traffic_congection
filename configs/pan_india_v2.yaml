@@ -1,0 +1,86 @@
+# Pan-India Generalized Training Configuration
+#
+# This config trains the hybrid BiLSTM + XGBoost model using the universal
+# Congestion Index target (CI = 1 - speed/free_flow_speed, range [0.0, 1.0]).
+#
+# Key differences from the v1 (tuned_high_accuracy) config:
+#   - target_mode: future_congestion_index  (vs future_congestion_score)
+#   - feature_columns: Vehicles only (fallback — no speed/occupancy in legacy CSV)
+#   - entity_one_hot disabled: entity column becomes a spatial key, not a
+#     feature. Road class one-hots (from OSM) are used instead.
+#
+# When training on multi-city Parquet telemetry (data/telemetry/), set
+#   dataset_path: data/telemetry/all_cities.parquet
+#   feature_columns: [current_speed_kmh, free_flow_speed_kmh]
+# and the CI will be computed directly from live speed ratios.
+
+output_dir: artifacts/pan_india_v2
+
+data:
+  dataset_path: data/traffic.csv
+  timestamp_col: DateTime
+  entity_col: Junction
+  feature_columns:
+    - Vehicles
+  # Universal target: normalized Congestion Index in [0, 1]
+  target_mode: future_congestion_index
+  window_size: 12           # 12 hourly steps = 12 hours of history
+  horizon_steps: 3          # Predict 3 steps (3 hours) ahead
+  future_average_steps: 1
+  split_ratio: 0.8
+  sample_interval_minutes: 60
+  peak_hours: [7, 8, 9, 17, 18, 19, 20]
+
+preprocessing:
+  normalization: minmax
+  use_engineered_features: true
+  use_peak_indicator: true
+  use_congestion_transition: true
+  use_temporal_features: true
+  use_lag_features: true
+  # Disable junction one-hot: spatial identity now comes from road_class + H3
+  use_entity_one_hot: false
+
+model:
+  hidden_units: [128, 64]
+  dropout: 0.3
+  dense_units: 64
+  head_dropout: 0.1
+  learning_rate: 0.001
+  batch_size: 64
+  epochs: 50
+  loss: huber
+  early_stopping: true
+  early_stopping_patience: 8
+  use_layer_normalization: true
+  reduce_lr_on_plateau: true
+  reduce_lr_factor: 0.5
+  reduce_lr_patience: 3
+  reduce_lr_min_lr: 0.00001
+  gradient_clipnorm: 1.0
+  random_seed: 42
+
+xgboost:
+  max_depth: 6
+  learning_rate: 0.05
+  n_estimators: 400
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  sequence_context_steps: 3
+  sequence_context_columns:
+    - Vehicles
+
+ensemble:
+  weight: 0.7
+  search_validation_weight: true
+  search_min: 0.55
+  search_max: 0.85
+  search_step: 0.05
+  optimization_metric: rmse
+
+evaluation:
+  num_classes: 3
+  bins_strategy: quantile
+  groupwise_bins: false
+  paper_target_accuracy: 85.0  # Adjusted target for cross-city generalization

@@ -6,3 +6,16 @@ tensorflow
 xgboost
 matplotlib
 flask
+
+# --- Pan-India generalization dependencies ---
+# Road network extraction from OpenStreetMap
+osmnx>=1.9.0
+
+# Uber H3 spatial indexing (hexagonal grid cells)
+h3>=3.7.0
+
+# Indian national + state-specific holiday calendar
+holidays>=0.46
+
+# Parquet read/write for telemetry storage
+pyarrow>=14.0.0

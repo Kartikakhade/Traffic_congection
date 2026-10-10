@@ -1,0 +1,78 @@
+# Multi-City Live Telemetry Training Configuration
+#
+# Trains the hybrid BiLSTM + Attention + XGBoost model directly on the
+# 3,822 real-world probe observations collected across 11 Indian cities.
+#
+# Target: Future Congestion Index (CI = 1 - current_speed/free_flow_speed in [0, 1])
+# Cadence: 5-minute sample interval, predicting 15 minutes ahead (3 steps).
+
+output_dir: artifacts/telemetry_multi_city
+
+data:
+  dataset_path: data/telemetry_multi_city.parquet
+  timestamp_col: timestamp
+  entity_col: corridor_name
+  feature_columns:
+    - current_speed_kmh
+    - free_flow_speed_kmh
+  target_mode: future_congestion_index
+  window_size: 6            # 6 steps * 5 min = 30 minutes of history
+  horizon_steps: 3          # 3 steps * 5 min = 15 minutes ahead
+  future_average_steps: 1
+  split_ratio: 0.8
+  sample_interval_minutes: 5
+  peak_hours: [8, 9, 10, 11, 17, 18, 19, 20]
+
+preprocessing:
+  normalization: minmax
+  use_engineered_features: true
+  use_peak_indicator: true
+  use_congestion_transition: true
+  use_temporal_features: true
+  use_lag_features: true
+  use_entity_one_hot: false
+
+model:
+  hidden_units: [64, 32]
+  dropout: 0.2
+  dense_units: 32
+  head_dropout: 0.1
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 35
+  loss: huber
+  early_stopping: true
+  early_stopping_patience: 6
+  use_layer_normalization: true
+  reduce_lr_on_plateau: true
+  reduce_lr_factor: 0.5
+  reduce_lr_patience: 3
+  reduce_lr_min_lr: 0.00001
+  gradient_clipnorm: 1.0
+  random_seed: 42
+
+xgboost:
+  max_depth: 5
+  learning_rate: 0.05
+  n_estimators: 250
+  subsample: 0.85
+  colsample_bytree: 0.85
+  reg_lambda: 1.0
+  sequence_context_steps: 3
+  sequence_context_columns:
+    - current_speed_kmh
+    - free_flow_speed_kmh
+
+ensemble:
+  weight: 0.65
+  search_validation_weight: true
+  search_min: 0.40
+  search_max: 0.80
+  search_step: 0.05
+  optimization_metric: rmse
+
+evaluation:
+  num_classes: 3
+  bins_strategy: quantile
+  groupwise_bins: false
+  paper_target_accuracy: 85.0

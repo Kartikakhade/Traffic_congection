@@ -1,5 +1,5 @@
 {
-  "use_placeholder_locations": true,
+  "use_placeholder_locations": false,
   "max_match_distance_km": 5.0,
   "map_center": {
     "lat": 12.9716,

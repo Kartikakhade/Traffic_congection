@@ -11,6 +11,7 @@ from traffic_hybrid.config import TrainingConfig
 from traffic_hybrid.features import (
     add_engineered_features,
     clean_dataframe,
+    compute_congestion_index_column,
     compute_reference_congestion_score,
     fit_reference_scaler,
     infer_base_feature_columns,
@@ -126,6 +127,28 @@ def _build_target_series(
             future = build_future_average(score)
         return future.astype(float), reference_scaler
 
+    if mode == "future_congestion_index":
+        # Universal Congestion Index target: CI = 1 - clamp(speed/free_flow, 0, 1)
+        # Falls back to vehicle-count normalisation for legacy datasets.
+        ci_series = compute_congestion_index_column(
+            df,
+            vehicles_col=base_columns[0] if base_columns else None,
+        )
+        temp_df = df.copy()
+        temp_df["congestion_index"] = ci_series
+        if average_steps == 1:
+            if grouped_target is not None:
+                future = temp_df.groupby(entity_col, sort=False)["congestion_index"].shift(-cfg.data.horizon_steps)
+            else:
+                future = ci_series.shift(-cfg.data.horizon_steps)
+            return future.astype(float), reference_scaler
+
+        if grouped_target is not None:
+            future = temp_df.groupby(entity_col, sort=False)["congestion_index"].transform(build_future_average)
+        else:
+            future = build_future_average(ci_series)
+        return future.astype(float), reference_scaler
+
     raise ValueError(f"Unsupported target mode: {mode}")
 
 
@@ -227,11 +250,15 @@ def prepare_datasets(cfg: TrainingConfig) -> PreparedDatasets:
 
     reference_scaler = fit_reference_scaler(df, base_columns, train_mask)
     target_series, reference_scaler = _build_target_series(cfg, df, base_columns, reference_scaler)
-    reference_score = (
-        target_series
-        if cfg.data.target_mode == "future_congestion_score"
-        else compute_reference_congestion_score(df, base_columns, reference_scaler)
-    )
+    if cfg.data.target_mode == "future_congestion_index":
+        reference_score = compute_congestion_index_column(
+            df,
+            vehicles_col=base_columns[0] if base_columns else None,
+        )
+    elif cfg.data.target_mode == "future_congestion_score":
+        reference_score = target_series
+    else:
+        reference_score = compute_reference_congestion_score(df, base_columns, reference_scaler)
     engineered_df = df.copy()
     engineered_df["reference_congestion_score"] = reference_score
     engineered_df = add_engineered_features(
@@ -246,6 +273,7 @@ def prepare_datasets(cfg: TrainingConfig) -> PreparedDatasets:
         use_temporal_features=cfg.preprocessing.use_temporal_features,
         use_lag_features=cfg.preprocessing.use_lag_features,
         use_entity_one_hot=cfg.preprocessing.use_entity_one_hot,
+        use_india_context=True,  # Always enrich with pan-India contextual defaults
     )
 
     feature_names = select_feature_columns(
@@ -314,6 +342,12 @@ def prepare_datasets(cfg: TrainingConfig) -> PreparedDatasets:
         "split_time": split_time.strftime("%Y-%m-%d %H:%M:%S"),
         "xgboost_sequence_context_steps": cfg.xgboost.sequence_context_steps,
         "xgboost_sequence_context_columns": sequence_context_columns,
+        # --- Pan-India generalization metadata ---
+        # Records whether this artifact was trained with the universal schema.
+        # Inference and the web UI check this to decide whether to supply
+        # road-class / weather / holiday contextual features.
+        "pan_india_schema": cfg.data.target_mode == "future_congestion_index",
+        "schema_version": "2.0" if cfg.data.target_mode == "future_congestion_index" else "1.0",
     }
 
     return PreparedDatasets(
