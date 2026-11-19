@@ -135,7 +135,6 @@ def _sample_corridor(
     city = corridor["city"]
     corridor_name = corridor["corridor_name"]
     road_class = corridor.get("road_class", "unknown")
-
     # --- Live speed data from TomTom ---
     flow = _fetch_tomtom_flow(lat, lng, tomtom_key)
     if flow is None:
